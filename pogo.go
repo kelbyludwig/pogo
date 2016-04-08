@@ -13,13 +13,43 @@ type Oracle func([]byte) error
 type Padding func([]byte, int) []byte
 type Unpadding func([]byte, int) ([]byte, error)
 
+func CBCPaddingOracle(ciphertext []byte, blockSize int, oracle Oracle) (plaintext []byte, err error) {
+
+	plaintext = make([]byte, 0)
+	err = nil
+
+	if len(ciphertext)%blockSize != 0 {
+		err = fmt.Errorf("ciphertext was not a multiple of the block size")
+		return
+	}
+
+	blocks, err := SplitBlocks(ciphertext, blockSize)
+
+	if err != nil {
+		return
+	}
+
+	for i := 1; i < len(blocks); i++ {
+		var pt []byte
+		pt, err = PaddingOracleBlockReveal(blocks, i, oracle)
+		if err != nil {
+			return
+		}
+		plaintext = append(plaintext, pt...)
+	}
+	return plaintext, nil
+
+}
+
 func PaddingOracleBlockReveal(blocks [][]byte, targetBlockIndex int, oracle Oracle) (plaintext []byte, err error) {
 
 	targetBlock := blocks[targetBlockIndex]
+	modBlockBackup := make([]byte, len(blocks[targetBlockIndex-1]))
 	modBlock := blocks[targetBlockIndex-1]
+	copy(modBlockBackup, modBlock)
 
-	if len(blocks) >= targetBlockIndex {
-		err = fmt.Errorf("target block index was too large")
+	if len(blocks) <= targetBlockIndex || len(blocks) < 2 {
+		err = fmt.Errorf("invalid target block index")
 		return
 	}
 
@@ -32,31 +62,59 @@ func PaddingOracleBlockReveal(blocks [][]byte, targetBlockIndex int, oracle Orac
 	}
 
 	//poi ("padding oracle index") keeps track of the index of the target byte
-	poi := ltb
+	poi := ltb - 1
 	expectedPadding := byte(1)
 
+	//intermediate state keeps tracks of the decrypted ciphertext bytes before the previous block is xor'd
+	intermediateState := make([]byte, ltb)
 	for poi >= 0 {
-		intermediateState := make([]byte, ltb)
-		for mb := 0; mb < 256; mb++ {
+		var mb int
+		for mb = 0; mb < 256; mb++ {
 			modByte := byte(mb)
 			modBlock[poi] = modByte
 			blocks[targetBlockIndex-1] = modBlock
-			ciphertext := MergeBlocks(blocks)
+			ciphertext := MergeBlocks(blocks[:targetBlockIndex+1])
 			err := oracle(ciphertext)
-			if err != nil {
+			if err == nil {
+
+				//w00t! we found valid padding. lets add it to our known intermediate state.
 				isb := modByte ^ expectedPadding
 				intermediateState[poi] = isb
 				expectedPadding += 1
-				modBlock[poi] = expectedPadding ^ isb
+
+				//If the next padding is bigger than the block size, we are done.
+				if expectedPadding > byte(ltb) {
+					poi--
+					break
+				}
+
+				//Update our modified ciphertext block in preperation for the next expected padding
+				for j := ltb - 1; j >= poi-1; j-- {
+					modBlock[j] = expectedPadding ^ intermediateState[j]
+				}
 				poi--
 				break
 			}
 		}
-		err = fmt.Errorf("unable to find valid padding for the target block")
-		return
 
+		if mb == 256 {
+			err = fmt.Errorf("unable to find valid padding for the target block")
+			return
+		}
 	}
+	plaintext, err = Xor(modBlockBackup, intermediateState)
 	return
+}
+
+func Xor(a, b []byte) ([]byte, error) {
+	if len(a) != len(b) {
+		return []byte{}, fmt.Errorf("cannot xor different length bytestrings")
+	}
+	c := make([]byte, len(a))
+	for i, x := range a {
+		c[i] = x ^ b[i]
+	}
+	return c, nil
 }
 
 func MergeBlocks(input [][]byte) []byte {

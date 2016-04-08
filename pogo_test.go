@@ -75,40 +75,90 @@ func TestSplitBlocks(t *testing.T) {
 
 func TestCBCPaddingOracle(t *testing.T) {
 
-	//oracle := func(input []byte) error {
-	//	key := []byte("example key 1234")
-	//	plaintextNoPadding := []byte("This is my plaintext. There are many like it, but this is mine.")
-	//	plaintext := PKCS7Padding(plaintextNoPadding, aes.BlockSize)
-	//	block, _ := aes.NewCipher(key)
-	//	iv := make([]byte, aes.BlockSize)
-	//	ciphertext := make([]byte, len(plaintext))
-	//	enc := cipher.NewCBCEncrypter(block)
-	//	enc.CryptBlocks(iv, plaintext)
+	key := []byte("example key 1234")
+	plaintextNoPadding := []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	plaintext := PKCS7Padding(plaintextNoPadding, aes.BlockSize)
+	log.Printf("Plaintext %x\n", plaintext)
+	log.Printf("Plaintext len %v\n", len(plaintext))
+	block, _ := aes.NewCipher(key)
+	iv := make([]byte, aes.BlockSize)
+	ciphertext := make([]byte, len(plaintext))
+	enc := cipher.NewCBCEncrypter(block, iv)
+	enc.CryptBlocks(ciphertext, plaintext)
 
-	//}
+	log.Printf("Ciphertext %x\n", ciphertext)
+	log.Printf("Ciphertext len %v\n", len(ciphertext))
 
-	//verPlaintext := make([]byte, len(ciphertext)-len(iv))
-	//dec := cipher.NewCBCDecrypter(block, iv)
-	//dec.CryptBlocks(verPlaintext, ciphertext[aes.BlockSize:])
+	oracle := func(input []byte) error {
+		//log.Printf("Oracle Ciphertext %x\n", input)
+		plaintext := make([]byte, len(input))
+		enc := cipher.NewCBCDecrypter(block, iv)
+		enc.CryptBlocks(plaintext, input)
+		//log.Printf("Oracle Plaintext  %x\n", plaintext)
+		if err := PKCS7Validate(plaintext, aes.BlockSize); err != nil {
+			return err
+		}
+		return nil
+	}
 
-	//if string(verPlaintext) != string(plaintext) {
-	//	t.Errorf("decrypted padded plaintext did not match expected plaintext")
-	//	log.Printf("Expected %v | Recieved %v\n", plaintext, verPlaintext)
-	//	return
-	//}
+	verPlaintext, err := CBCPaddingOracle(ciphertext, aes.BlockSize, oracle)
+	if err != nil {
+		t.Errorf("%v", err)
+		return
+	}
+	log.Printf("Decrypted plaintext %x\n", verPlaintext)
+	if string(verPlaintext) != string(plaintext[aes.BlockSize:]) {
+		t.Errorf("decrypted block did not match the expected plaintext")
+		return
+	}
+}
 
-	//verPlaintextNoPadding, err := PKCS7Unpadding(verPlaintext, aes.BlockSize)
+func TestCBCPaddingOracleSingleBlock(t *testing.T) {
 
-	//if err != nil {
-	//	t.Errorf("%v", err)
-	//	return
-	//}
+	key := []byte("example key 1234")
+	plaintextNoPadding := []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	plaintext := PKCS7Padding(plaintextNoPadding, aes.BlockSize)
+	log.Printf("Plaintext %x\n", plaintext)
+	log.Printf("Plaintext len %v\n", len(plaintext))
+	block, _ := aes.NewCipher(key)
+	iv := make([]byte, aes.BlockSize)
+	ciphertext := make([]byte, len(plaintext))
+	enc := cipher.NewCBCEncrypter(block, iv)
+	enc.CryptBlocks(ciphertext, plaintext)
 
-	//if string(verPlaintextNoPadding) != string(plaintextNoPadding) {
-	//	t.Errorf("decrypted unpadded plaintexted did not match expected plaintext")
-	//	return
-	//}
+	log.Printf("Ciphertext %x\n", ciphertext)
+	log.Printf("Ciphertext len %v\n", len(ciphertext))
 
+	oracle := func(input []byte) error {
+		//log.Printf("Oracle Ciphertext %x\n", input)
+		plaintext := make([]byte, len(input))
+		enc := cipher.NewCBCDecrypter(block, iv)
+		enc.CryptBlocks(plaintext, input)
+		//log.Printf("Oracle Plaintext  %x\n", plaintext)
+		if err := PKCS7Validate(plaintext, aes.BlockSize); err != nil {
+			return err
+		}
+		return nil
+	}
+	blocks, err := SplitBlocks(ciphertext, aes.BlockSize)
+	log.Printf("AES Block size %v\n", aes.BlockSize)
+	log.Printf("Number of ciphertext blocks %v\n", len(blocks))
+	if err != nil {
+		t.Errorf("%v", err)
+		return
+	}
+	log.Printf("Mod block    %x\n", blocks[0])
+	log.Printf("Target block %x\n", blocks[1])
+	verPlaintext, err := PaddingOracleBlockReveal(blocks, 1, oracle)
+	if err != nil {
+		t.Errorf("%v", err)
+		return
+	}
+	log.Printf("Plaintext block %x\n", verPlaintext)
+	if string(verPlaintext) != "AAAAAAAAAAAAAAAA" {
+		t.Errorf("decrypted block did not match the expected plaintext")
+		return
+	}
 }
 
 func TestCBCEncryption(t *testing.T) {
