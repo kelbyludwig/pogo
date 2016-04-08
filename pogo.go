@@ -5,6 +5,37 @@ import (
 	"fmt"
 )
 
+type Pogo struct {
+	BlockSize       int
+	ModeOfOperation string
+	PaddingType     string
+	padding         Padding
+	unpadding       Unpadding
+	validate        Validate
+	oracle          Oracle
+}
+
+func (p *PogoConfig) Run(ciphertext []byte, errorOracle Oracle) ([]byte, error) {
+
+	switch p.PaddingType {
+	case "PKCS7":
+		p.padding = PKCS7Padding
+		p.unpadding = PKCS7Unpadding
+		p.validate = PKCS7Validate
+	default:
+		return []byte{}, fmt.Errorf("undefined padding type")
+	}
+
+	switch p.ModeOfOperation {
+	case "CBC":
+		p.oracle = CBCPaddingOracle
+	default:
+		return []byte{}, fmt.Errorf("undefined mode of operation")
+	}
+	return p.oracle(ciphertext, p.BlockSize, errorOracle)
+
+}
+
 //Oracle is a type synonym that represents a padding oracle.
 //Oracle should take in pogo's input bytes and return an error
 //if there was a padding validation error. Otherwise, it should
@@ -12,6 +43,7 @@ import (
 type Oracle func([]byte) error
 type Padding func([]byte, int) []byte
 type Unpadding func([]byte, int) ([]byte, error)
+type Validate func([]byte, int) error
 
 func CBCPaddingOracle(ciphertext []byte, blockSize int, oracle Oracle) (plaintext []byte, err error) {
 
